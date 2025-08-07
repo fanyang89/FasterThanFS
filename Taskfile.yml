@@ -1,0 +1,56 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  GREETING: Hello, World!
+
+tasks:
+  default:
+    cmds:
+      - echo "{{.GREETING}}"
+    silent: true
+    
+  build-sqlite:
+    desc: "Build SQLite3 version"
+    cmds:
+      - echo "Building SQLite3 version..."
+      - OPTS="-DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION"
+      - gcc -Os -I. $OPTS kvtest.c sqlite3.c -o kvtest
+      - echo "SQLite3 version built successfully"
+    silent: false
+    
+  build-duckdb:
+    desc: "Build DuckDB version"
+    cmds:
+      - echo "Building DuckDB version..."
+      - g++ -std=c++11 -O2 $(pkg-config --cflags duckdb) ducktest.cc $(pkg-config --libs duckdb) -o ducktest
+      - echo "DuckDB version built successfully"
+    silent: false
+    
+  build-all:
+    desc: "Build both SQLite3 and DuckDB versions"
+    cmds:
+      - task: build-sqlite
+      - task: build-duckdb
+    
+  clean:
+    desc: "Clean build artifacts"
+    cmds:
+      - rm -f kvtest ducktest test_duckdb test_duckdb.cpp
+      - echo "Cleaned build artifacts"
+    silent: false
+    
+  test-sqlite:
+    desc: "Test SQLite3 version"
+    cmds:
+      - task: build-sqlite
+      - echo "Testing SQLite3 version..."
+      - ./kvtest --help
+    
+  test-duckdb:
+    desc: "Test DuckDB version"
+    cmds:
+      - task: build-duckdb
+      - echo "Testing DuckDB version..."
+      - ./ducktest --help
