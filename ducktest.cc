@@ -110,7 +110,53 @@ static const char zHelp[] =
 #include <unistd.h>
 #include <sys/time.h>
 #include <dirent.h>
+#include <ctime>
+#include <cstdlib>
+
+// Try to include DuckDB - if not available, we'll provide a fallback
+#ifdef HAS_DUCKDB
 #include "duckdb.hpp"
+#else
+// Fallback DuckDB stubs for compilation without DuckDB installed
+#include <memory>
+namespace duckdb {
+    class DuckDB {
+    public:
+        DuckDB(const char* path) {}
+    };
+    class string_t {
+    public:
+        const void* GetData() const { return nullptr; }
+        size_t GetSize() const { return 0; }
+    };
+    template<typename T>
+    class Value {
+    public:
+        T GetValue(int idx) const { return T(); }
+    };
+    class MaterializedQueryResult {
+    public:
+        bool HasError() const { return true; }
+        const char* GetError() const { return "DuckDB not available"; }
+        size_t RowCount() const { return 0; }
+        class iterator {
+        public:
+            Value<int64_t> operator*() { return Value<int64_t>(); }
+            iterator& operator++() { return *this; }
+            bool operator!=(const iterator& other) { return false; }
+        };
+        iterator begin() { return iterator(); }
+        iterator end() { return iterator(); }
+    };
+    class Connection {
+    public:
+        Connection(DuckDB& db) {}
+        std::unique_ptr<MaterializedQueryResult> Query(const std::string& sql) {
+            return std::unique_ptr<MaterializedQueryResult>(new MaterializedQueryResult());
+        }
+    };
+}
+#endif
 
 #ifndef _WIN32
 # include <unistd.h>
@@ -156,6 +202,22 @@ typedef uint64_t sqlite3_int64;
 ** DuckDB doesn't need pointer-to-integer casting macros like SQLite
 ** since we'll use C++ features and proper type handling
 */
+
+/*
+** Case-insensitive string comparison (cross-platform)
+*/
+static int kvtest_strcasecmp(const char *s1, const char *s2) {
+    while (*s1 && *s2) {
+        int c1 = tolower((unsigned char)*s1);
+        int c2 = tolower((unsigned char)*s2);
+        if (c1 != c2) {
+            return c1 - c2;
+        }
+        s1++;
+        s2++;
+    }
+    return tolower((unsigned char)*s1) - tolower((unsigned char)*s2);
+}
 
 /*
 ** Show the help text and quit.
@@ -227,7 +289,7 @@ static int integerValue(const char *zArg){
     }
   }
   for(i=0; i<sizeof(aMult)/sizeof(aMult[0]); i++){
-    if( strcasecmp(aMult[i].zSuffix, zArg)==0 ){
+    if( kvtest_strcasecmp(aMult[i].zSuffix, zArg)==0 ){
       v *= aMult[i].iMult;
       break;
     }
@@ -352,13 +414,17 @@ static int initMain(int argc, char **argv){
     fatalError("unknown option: \"%s\"", argv[i]);
   }
   
+  #ifdef HAS_DUCKDB
   try {
     duckdb::DuckDB db(zDb);
     duckdb::Connection con(db);
     
     // Create table and insert data
     std::string sql = "DROP TABLE IF EXISTS kv; CREATE TABLE kv(k INTEGER PRIMARY KEY, v BLOB);";
-    con.Query(sql);
+    auto result = con.Query(sql);
+    if (result->HasError()) {
+      fatalError("database create failed: %s", result->GetError());
+    }
     
     // Generate and insert data in batches for better performance
     const int batch_size = 1000;
@@ -370,9 +436,12 @@ static int initMain(int argc, char **argv){
       for(int j = batch_start; j <= batch_end; j++) {
         if (j > batch_start) insert_sql += ", ";
         insert_sql += "(" + std::to_string(j) + ", randomblob(" + 
-                      std::to_string(sz + (rand() % (iVariance + 1))) + "))";
+                      std::to_string(sz + (randInt() % (iVariance + 1))) + "))";
       }
-      con.Query(insert_sql);
+      result = con.Query(insert_sql);
+      if (result->HasError()) {
+        fatalError("database insert failed: %s", result->GetError());
+      }
     }
     
     printf("Created database with %d entries\n", nCount);
@@ -381,6 +450,10 @@ static int initMain(int argc, char **argv){
     fatalError("database create failed: %s", e.what());
     return 1;
   }
+#else
+  fatalError("DuckDB not available - compile with -DHAS_DUCKDB and link against DuckDB library");
+  return 1;
+#endif
 }
 
 /*
@@ -405,14 +478,19 @@ static int statMain(int argc, char **argv){
     fatalError("unknown option: \"%s\"", argv[i]);
   }
   
+  #ifdef HAS_DUCKDB
   try {
     duckdb::DuckDB db(zDb);
     duckdb::Connection con(db);
     
     if( doVacuum ){
       printf("Vacuuming...."); fflush(stdout);
-      con.Query("VACUUM");
-      printf("       done\n");
+      auto result = con.Query("VACUUM");
+      if (result->HasError()) {
+        printf("VACUUM failed: %s\n", result->GetError());
+      } else {
+        printf("       done\n");
+      }
     }
     
     auto result = con.Query("SELECT count(*), min(length(v)), max(length(v)), avg(length(v)) FROM kv");
@@ -421,10 +499,10 @@ static int statMain(int argc, char **argv){
     }
     
     for (auto &row : *result) {
-      printf("Number of entries:  %8d\n", row.GetValue<int64_t>(0));
+      printf("Number of entries:  %8lld\n", row.GetValue<int64_t>(0));
       printf("Average value size: %8d\n", (int)row.GetValue<double>(3));
-      printf("Minimum value size: %8d\n", row.GetValue<int64_t>(1));
-      printf("Maximum value size: %8d\n", row.GetValue<int64_t>(2));
+      printf("Minimum value size: %8lld\n", row.GetValue<int64_t>(1));
+      printf("Maximum value size: %8lld\n", row.GetValue<int64_t>(2));
     }
     
     // DuckDB doesn't have page_size, page_count, or freelist_count pragmas like SQLite
@@ -435,6 +513,10 @@ static int statMain(int argc, char **argv){
     fatalError("cannot open database \"%s\": %s", zDb, e.what());
     return 1;
   }
+#else
+  fatalError("DuckDB not available - compile with -DHAS_DUCKDB and link against DuckDB library");
+  return 1;
+#endif
 }
 
 
@@ -482,6 +564,7 @@ static int exportMain(int argc, char **argv){
     fatalError("object \"%s\" is not a directory", zDir);
   }
   
+  #ifdef HAS_DUCKDB
   try {
     duckdb::DuckDB db(zDb);
     duckdb::Connection con(db);
@@ -512,6 +595,9 @@ static int exportMain(int argc, char **argv){
                  iKey/10000, (iKey/100)%100, iKey%100);
       }
       out = fopen(zFN, "wb");      
+      if (!out) {
+        fatalError("cannot open file \"%s\" for writing", zFN);
+      }
       nWrote = fwrite(pData, 1, nData, out);
       fclose(out);
       printf("\r%s   ", zTailPtr); fflush(stdout);
@@ -526,6 +612,10 @@ static int exportMain(int argc, char **argv){
     fatalError("cannot open database \"%s\": %s", zDb, e.what());
     return 1;
   }
+#else
+  fatalError("DuckDB not available - compile with -DHAS_DUCKDB and link against DuckDB library");
+  return 1;
+#endif
 }
 
 /*
@@ -586,9 +676,9 @@ static void updateFile(const char *zName, sqlite3_int64 *pnByte, int doFsync){
   if( pBuf==0 ){
     fatalError("Cannot allocate %lld bytes\n", sz);
   }
-  // Generate random data using standard C rand()
+  // Generate random data using our deterministic randInt()
   for(int i = 0; i < sz; i++) {
-    pBuf[i] = rand() % 256;
+    pBuf[i] = (unsigned char)(randInt() % 256);
   }
 #if defined(_WIN32)
   if( doFsync ) zMode = "wbc";
@@ -671,6 +761,7 @@ static int display_stats(
   fprintf(out, "\n");
   fprintf(out, "Note: DuckDB does not expose detailed memory statistics like SQLite\n");
   
+  #ifdef HAS_DUCKDB
   // Try to get some basic information if available
   try {
     auto result = con->Query("SELECT COUNT(*) FROM kv");
@@ -682,6 +773,9 @@ static int display_stats(
   } catch (...) {
     // Ignore errors
   }
+#else
+  fprintf(out, "DuckDB not available - no statistics available\n");
+#endif
 
 #ifdef __linux__
   displayLinuxIoStats(out);
@@ -784,6 +878,7 @@ static int runMain(int argc, char **argv){
   
   // For DuckDB, open connection first to get max key
   if( eType==PATH_DB ){
+#ifdef HAS_DUCKDB
     try {
       duckdb::DuckDB db(zDb);
       duckdb::Connection con(db);
@@ -799,12 +894,17 @@ static int runMain(int argc, char **argv){
     } catch (std::exception& e) {
       fatalError("cannot open database \"%s\": %s", zDb, e.what());
     }
+#else
+    fatalError("DuckDB not available - compile with -DHAS_DUCKDB and link against DuckDB library");
+    return 1;
+#endif
   }
   
   if( iMax<=0 ) iMax = 1000;
   tmStart = timeOfDay();
   
   if( eType==PATH_DB ){
+#ifdef HAS_DUCKDB
     try {
       duckdb::DuckDB db(zDb);
       duckdb::Connection con(db);
@@ -874,6 +974,10 @@ static int runMain(int argc, char **argv){
     } catch (std::exception& e) {
       fatalError("database error: %s", e.what());
     }
+#else
+    fatalError("DuckDB not available - compile with -DHAS_DUCKDB and link against DuckDB library");
+    return 1;
+#endif
   } else {
     // File-based operations (PATH_DIR or PATH_TREE)
     for(i=0; i<nCount; i++){
