@@ -1,2 +1,10 @@
+/.task
+/.claude
+
+/ducktest
+/kvtest
+
+/*.db
+/*.ddb
+/*.duckdb
 /test1.*
-/test1.d?db

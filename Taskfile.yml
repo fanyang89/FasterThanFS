@@ -1,134 +1,53 @@
 # https://taskfile.dev
-# Taskfile for building and testing kvtest (SQLite) and ducktest (DuckDB) benchmarks
 
-version: "3"
+version: '3'
 
 vars:
-  GREETING: Hello, World!
+  DUCKDB_VERSION: "0.10.2"
 
 tasks:
   default:
-    desc: "Show available tasks"
     cmds:
-      - echo "Available tasks:"
-      - echo "  build-sqlite    - Build SQLite3 version"
-      - echo "  build-duckdb    - Build DuckDB version"
-      - echo "  build-all       - Build both versions"
-      - echo "  install-duckdb  - Install DuckDB development files"
-      - echo "  test-sqlite     - Test SQLite3 version"
-      - echo "  test-duckdb     - Test DuckDB version"
-      - echo "  clean           - Clean build artifacts"
-      - echo ""
-      - "echo 'Note: DuckDB version requires libduckdb-dev package or equivalent'"
+      - task: build
     silent: true
-    
-  build-sqlite:
-    desc: "Build SQLite3 version"
-    cmds:
-      - echo "Building SQLite3 version..."
-      - OPTS="-DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION"
-      - gcc -Os -I. $OPTS kvtest.c sqlite3.c -o kvtest
-      - echo "SQLite3 version built successfully"
-    silent: false
-    
-  build-duckdb:
-    desc: "Build DuckDB version"
-    cmds:
-      - echo "Building DuckDB version..."
-      - |
-        if pkg-config --exists duckdb; then
-          echo "Using pkg-config to find DuckDB..."
-          g++ -std=c++11 -O2 $(pkg-config --cflags duckdb) -DHAS_DUCKDB ducktest.cc $(pkg-config --libs duckdb) -o ducktest
-        elif [ -f "/usr/local/include/duckdb.hpp" ]; then
-          echo "Using system-installed DuckDB..."
-          g++ -std=c++11 -O2 -I/usr/local/include -DHAS_DUCKDB ducktest.cc -L/usr/local/lib -lduckdb -o ducktest
-        elif [ -f "/usr/include/duckdb.hpp" ]; then
-          echo "Using system DuckDB headers..."
-          g++ -std=c++11 -O2 -DHAS_DUCKDB ducktest.cc -lduckdb -o ducktest
-        else
-          echo "DuckDB not found, building stub version..."
-          g++ -std=c++11 -O2 ducktest.cc -o ducktest
-          echo "Warning: DuckDB library not found. Built stub version that will show error messages."
-        fi
-      - echo "DuckDB version built successfully"
-    silent: false
-    
-  build-all:
-    desc: "Build both SQLite3 and DuckDB versions"
-    cmds:
-      - task: build-sqlite
-      - task: build-duckdb
-    
-  setup:
-    desc: "Setup environment and show installation instructions"
-    cmds:
-      - echo "=== kvtest/ducktest Benchmark Setup ==="
-      - echo ""
-      - echo "This project contains two key-value store benchmarks:"
-      - echo "1. kvtest.c - SQLite3 implementation"
-      - echo "2. ducktest.cc - DuckDB implementation"
-      - echo ""
-      - echo "Prerequisites:"
-      - "echo '  - SQLite3: Usually included with system'"
-      - "echo '  - DuckDB: Install using 'task install-duckdb' or manually'"
-      - echo ""
-      - echo "Quick Start:"
-      - "echo '  1. Install DuckDB: task install-duckdb'"
-      - "echo '  2. Build both: task build-all'"
-      - "echo '  3. Test SQLite: task test-sqlite'"
-      - "echo '  4. Test DuckDB: task test-duckdb'"
-      - echo ""
-      - echo "Example usage:"
-      - echo "  ./kvtest init test.db --count 1000 --size 10000"
-      - echo "  ./ducktest init test.db --count 1000 --size 10000"
-      - echo "  ./kvtest run test.db --count 100 --max-id 1000"
-      - echo "  ./ducktest run test.db --count 100 --max-id 1000"
-      - echo ""
 
-  install-duckdb:
-    desc: "Install DuckDB development files (requires sudo)"
+  build:
+    desc: "Build ducktest executable"
     cmds:
-      - echo "Installing DuckDB development files..."
-      - |
-        if command -v apt-get >/dev/null 2>&1; then
-          echo "Using apt-get to install DuckDB..."
-          sudo apt-get update
-          sudo apt-get install -y libduckdb-dev
-        elif command -v yum >/dev/null 2>&1; then
-          echo "Using yum to install DuckDB..."
-          sudo yum install -y duckdb-devel
-        elif command -v brew >/dev/null 2>&1; then
-          echo "Using brew to install DuckDB..."
-          brew install duckdb
-        else
-          echo "No package manager found. Please install DuckDB manually."
-          echo "Visit: https://duckdb.org/docs/installation/"
-          echo "For Ubuntu/Debian: sudo apt-get install libduckdb-dev"
-          echo "For CentOS/RHEL: sudo yum install duckdb-devel"
-          echo "For macOS: brew install duckdb"
-          exit 1
-        fi
-      - echo "DuckDB installation completed"
-      - "echo 'You can now build the DuckDB version with: task build-duckdb'"
-    silent: false
+      - echo "Building ducktest..."
+      - gcc -O2 -std=c99 ducktest.c -lduckdb -o ducktest
+      - echo "Build complete"
+    sources:
+      - ducktest.c
+    generates:
+      - ducktest
 
   clean:
     desc: "Clean build artifacts"
     cmds:
-      - rm -f kvtest ducktest test_duckdb test_duckdb.cpp
-      - echo "Cleaned build artifacts"
-    silent: false
-    
-  test-sqlite:
-    desc: "Test SQLite3 version"
+      - rm -f ducktest
+
+  test:
+    desc: "Run basic test"
+    deps:
+      - build
     cmds:
-      - task: build-sqlite
-      - echo "Testing SQLite3 version..."
-      - ./kvtest --help
-    
-  test-duckdb:
-    desc: "Test DuckDB version"
+      - echo "Creating test database..."
+      - ./ducktest init test.ddb --count 100k --size 10k --variance 2k
+      - echo "Running performance test..."
+      - ./ducktest run test.ddb --count 100k
+      - echo "Test complete"
+
+  install-deps:
+    desc: "Install DuckDB development package (Ubuntu/Debian)"
     cmds:
-      - task: build-duckdb
-      - echo "Testing DuckDB version..."
-      - ./ducktest --help
+      - echo "Installing DuckDB development package..."
+      - sudo apt-get update
+      - sudo apt-get install -y libduckdb-dev
+
+  help:
+    desc: "Show ducktest help"
+    deps:
+      - build
+    cmds:
+      - ./ducktest
