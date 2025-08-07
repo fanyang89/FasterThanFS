@@ -1,6 +1,6 @@
 # https://taskfile.dev
 
-version: '3'
+version: "3"
 
 vars:
   DUCKDB_VERSION: "0.10.2"
@@ -15,12 +15,12 @@ tasks:
     desc: "Build ducktest executable"
     cmds:
       - echo "Building ducktest..."
-      - gcc -O2 -std=c99 ducktest.c -lduckdb -o ducktest
+      - gcc -O2 -std=c23 ducktest.c -lduckdb -o ducktest
       - echo "Build complete"
     sources:
       - ducktest.c
     generates:
-      - ducktest
+      - ducktestp
 
   clean:
     desc: "Clean build artifacts"
